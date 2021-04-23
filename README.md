@@ -1,0 +1,1 @@
+# myERC20token
