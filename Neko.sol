@@ -1,76 +1,84 @@
+ // SPDX-License-Identifier: GPL-3.0
+
 pragma solidity >=0.7.0 <0.9.0;
 
-/**
- * @dev Interface of the ERC20 standard as defined in the EIP.
- */
-interface IERC20 {
-    // Returns the amount of tokens in existence.
-    function totalSupply() external view returns (uint256);
-    //Returns the amount of tokens owned by an address.
-    function balanceOf(address account) external view returns (uint256);
-    /**
-    * @dev The ERC-20 standard allow an owner topermit a spender
-    * to be able to spend a certain number of tokens from the owner
-    * 
-    * Returns the remainning amount the spender will
-    * be allowed to spend fron the owner
-    */
-    function allowance(address owner, address spender) external view returns (uint256);
-    /** 
-     * Moves the amount of tokens from the caller (msg.sender) to the recipient.
-     * Emits a {Transfer} event.
-     * Returns true is the operation succeed.
-     */
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    /**
-    * Set the amount of the allowance the spender 
-    * is permitted to transfer from the caller.
-    * Emits an {Approve} event.
-    * Returns a boolean value indicate whether
-    * the alloance was seccessfully set.
-    */
-    function approve(address spender, uint256 amount) external returns (bool);
-    /**
-    * Moves the amount of tokens from sender to recipient
-    * using the allowance mechanism, amount is then deducted
-    * from the caller’s allowance
-    * Emits a {Transfer} event.
-    */
-    function transferFrom(address sender,address recipient, uint amount) external returns (bool);
-    /**
-    * Emitted when the amount of tokens(VALUE) is sent
-    * from the FROM to the TO. VALUE may be zero
-    * In minting, FROM is 0x00..0000 which be the address
-    * of TO in burnning.
-    */
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    /**
-    * Emitted when the amount of tokens is approved
-    * by the OWNER to be used by the SPENDER.
-    */
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-}
+import "./_IERC20.sol";
+import "./_SafeMath.sol";
+import "./_IERC20Extended.sol";
+import "./_Context.sol";
 
-contract Neko is IERC20 {
-    string public constant name = 'Nekocoin';
-    string public constant symble = "NEKO';
-    uint8 public constant decimals = 18;
-    uint256 total_supply = 100000000000000; // 100 trillion of Nekocoins issued in Genesis
-    using safemath for total_supply;
+contract Neko is Context, IERC20, IERC20Extended {
+    using SafeMath for uint256;
+    string private constant name = 'Nekocoin';
+    string private constant symbol= 'NEKO';
+    uint8 private constant decimals = 18;
+    uint256 totalSupply = 100000000000000; // 100 trillion of Nekocoins issued in Genesis
     
-    mapping(address => uint256) balances;
-    mapping(address => mapping(address => uint256)) allowed;
+    mapping(address => uint256) private balances;
+    mapping(address => mapping(address => uint256)) private allowance;
     
-    event Approval(address indexed tokenOwner, address indexed permittedSpender, uint256 tokenValue);
-    event Transfer(adress indexed from, address indexed to, uint256 tokenValue);
+    // event Approval(address indexed tokenOwner, address indexed permittedSpender, uint256 tokenValue);
+    // event Transfer(address indexed From, address indexed To, uint256 tokenValue);
 
-    constructor(uint256 totalAmount) public {
-        total_supply = totalAmount;
+    constructor() public {
         balances[msg.sender] = total_supply;
     }
     
-    function totoalSupply() public override view returns (uint256) {
-        return total_supply;
+    /** @dev Creates `amount` tokens and assigns them to 
+     * `account`, increasing the total supply.
+     * 
+     * Emits a {Transfer} event with `from` set to the zero address.
+     */
+     function mint(address account, uint256 amount) internal {
+         require(account!=address(0), "ERC20: mint to the zero address");
+         totalSupply = totalSupply.add(amount);
+         balances[account] = balances[account].add(amount);
+         emit Transfer(address(0), account, amount);
+     }
+     
+    /**
+     * @dev Destroys `amount` tokens from
+     * `account`, reducing the total supply.
+     *
+     * Emits a {Transfer} event with `to` set to the zero address.
+     */
+     function burn(address account, uint256 amount) internal {
+         require(account!=address(0), "ERC20: burn from the zero address");
+         require(amount<=balances[account], "ERC20: Insufficient balance to be burnt");
+         balance[account] = balance[account].sub(amount);
+         totalSupply = totalSupply.sub(amount);
+     }
+     
+    function _transfer(address sender, address recipient, uint256 amount) internal {
+        require(sender!=address(0), "ERC20: transfer from the zero address");
+        require(recipient!=address(0), "ERC20: transfer to the zero address");
+        require(amount <= balances[sender], "ERC20: transfer amount exceeds balance");
+        balances[sender] = balances[sender].sub(amount);
+        balances[recipient] = balances[recipient].add(amount);
+        emit Transfer(sender, recipient, amount);
+    }
+    
+    function _approve(address owner, address spender, uint256 amount) internal {
+        require(owner!=address(0), "ERC20: approve from the zero address");
+        require(spender!=address(0), "ERC20: approve to the zero address");
+        allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+    
+    function getName() public override view virtual returns (string memory) {
+        return name;
+    }
+    
+    function getSymbol() public override view virtual returns (string memory) {
+        return symbol;
+    }
+    
+    function getDecimals() public override view virtual returns (uint8) {
+        return 18;
+    }
+    
+    function getTotalSupply() public override view returns (uint256) {
+        return totalSupply;
     }
     
     function balanceOf(address account) public override view returns (uint256) {
@@ -78,88 +86,43 @@ contract Neko is IERC20 {
     }
     
     function allowance(address owner, address spender) public override view returns (uint256) {
-        return allowed[owner][spender];
+        return allowances[owner][spender];
     }
     
+    /**
+     * @dev Atomically increases the allowance granted to `spender` by the caller.
+     * 
+     * This is an alternative to {approve} that can be used as a mitigation for
+     * problems described in {IERC20-approve}.
+     * 
+     * Emits an {Approval} event indicating the updated allowance.
+     */
+    function increaseAllowance(address spender, uint256 addedVal) external returns (bool) {
+         allowances[msg.sender][spender] = allowances[msg.sender][spender].add(addedVal);
+         return true;
+     }
+     
+    function decreaseAllowance(address spender, uint256 subtractedVal) external returns (bool) {
+         require(amount<=allowance[msg.sender][spender], "ERC20: Insufficient allowance to be subtracted");
+         allowance[msg.sender][spender] = allowances[msg.sender][spender].sub(subtractedVal);
+         return true;
+     }
+    
     function transfer(address recipient, uint256 amount) public override returns (bool) {
-        require(
-            amount <= balances[msg.sender], 
-            "The amount of tokens you are trying to transfer is more than your can afford"
-        );
-        balances[msg.sender] = balances[msg.sender].sub(amount);
-        balances[recipent] = balances[recipient].add(amount);
-        emit Transfer(msg.sender, recipient, amount);
+        _transfer(msg.sender, recipient, amount);
         return true;
     }
     
     function approve(address spender, uint256 amount) public override returns (bool) {
-        allowed[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
+        _approve(msg.sender, spender, amount);
         return true;
     }
     
-    function transferFrom(address sender, address recipient, uint256 amount) override returns (bool) {
-        require(amount <= balances[sender]);
-        require(amount <= allowed[sender][msg.sender]);
-        balances[sender] = balances[sender].sub(amount);
-        allowed[sender][msg.sender] = allowed[sender][msg.sender].sub(amount);
-        balances[recipient] = balances[recipient].add(amount);
-        emit Transfer(sender, recipient, amount);
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
+        // Caller is approved to spend more than "amount" tokens belongs to the sender.
+        require(amount <= allowances[sender][msg.sender]);
+        _transfer(sender, recipient, amount);
+        allowances[sender][msg.sender] = allowances[sender][msg.sender].sub(amount);
         return true;
-    }
-/**   
-    struct beneficiary{
-        address receiver;
-        uint256 amount;
-        bool received;
-    }
-    enum face{face1, face2, face3} // The face of the coin
-    // Certanin number of necos has been issued to a list of benificiaries
-    event nekoIssued(address benificiary, uint256 amount);
-    
-    
-    modifier onlyIssuer(){
-    require(
-         msg.sender == nekosama, // If not the nekoSama call this contract
-         "only nakosama can issue Necos." // Reject the require and claim
-    );
-    _; // Otherwise execute the function
-    }
-    
-    /**
-    * @dev Issue a given number of Neko at a time
-    * @param num value to issue
-    *
-   function issue(uint256 num) public onlyIssuer{
-
-    }
-*/    
-    
-    // A library for performing overflow-safe math, courtesy of DappHub (https://github.com/dapphub/ds-math)
-    library SafeMath {
-        function add(uint256 a, uint256 b) internal pure returns (uint256 c) {
-            assert((c=a+b)>=a, 'ds-math-add-overflow');
-        }
-        
-        function sub(uint256 a, uint256 b) internal pure returns (uint256 c) {
-            assert((c=a-b)<=a, 'ds-math-sub-underflow')
-        }
-        
-        function mul(uint256 a, uint256 b) internal pure returns (uint256 c) {
-            assert(b==0||(c=a*b)/b=a, 'ds-math-mul-overflow')
-        }
-        
-        function min(uint256 a, uint256 b) internal pure returns (uint256 c) {
-            c = a < b? a : b;
-        }
-        // Babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
-        function sqrt(uint256 s) internal pure returns (uint r) {
-            r = 1; 
-            uint256 h = s;
-            while(r<h) {
-                h = (h+s)/2;
-                r = s/h;
-            }
-        }
     }
  }
