@@ -40,9 +40,27 @@ library SafeMath {
         return c;
     }
     
+   /**
+     * @dev Returns the remainder of dividing two unsigned integers. (unsigned integer modulo),
+     * Reverts with custom message when dividing by zero.
+     *
+     * Counterpart to Solidity's `%` operator. This function uses a `revert`
+     * opcode (which leaves remaining gas untouched) while Solidity uses an
+     * invalid opcode to revert (consuming all remaining gas).
+     *
+     * Requirements:
+     *
+     * - The divisor cannot be zero.
+     */
+    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b != 0, 'ds-math-mod-overflow');
+        return a % b;
+    }
+    
     function min(uint256 a, uint256 b) internal pure returns (uint256 c) {
         c = a < b? a : b;
     }
+    
     // Babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
     function sqrt(uint256 s) internal pure returns (uint r) {
         r = 1; 
