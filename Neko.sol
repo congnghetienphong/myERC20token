@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 
 pragma solidity >=0.7.0 <0.9.0;
+
 import "./IERC20.sol";
 import "./SafeMath.sol";
 import "./IERC20Extended.sol";
@@ -21,7 +22,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     uint256 private constant MAX = ~uint256(0); // 100 trillion of Nekocoins issued in Genesis
     uint256 private totalSupply = 10**15;
     uint256 private totalReflection = MAX - MAX%totalSupply;
-    uint256 private totalFees;
+    uint256 private totalTaxFees;
     
     uint256 public taxFee = 5;
     uint256 private previousTaxFee = taxFee;
@@ -34,7 +35,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     bool public swapAndLiquifyEnabled = true;
     
     uint256 public maxTxAmount = totalSupply.div(2);
-    uint256 private tokensSoldToAddLiq = totalSupply.div(2);
+    uint256 private tokensSellToAddLiq = totalSupply.div(2);
 
     mapping(address => uint256) private balances;
     mapping(address => mapping(address => uint256)) private allowances;
@@ -44,7 +45,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     
     address[] private excluded;
     mapping(address => bool) private isExcludedFromFee;
-    mapping(address => bool) private isExcluded;
+    mapping(address => bool) private isExcluded; // From static reward
     
     event minTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap);
     event SwapAndLiquifyEnabledUpdated(bool enabled);
@@ -90,15 +91,6 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
          balances[account] = balances[account].sub(amount);
          totalSupply = totalSupply.sub(amount);
      }
-     
-    function _transfer(address sender, address recipient, uint256 amount) internal {
-        require(sender!=address(0), "ERC20: transfer from the zero address");
-        require(recipient!=address(0), "ERC20: transfer to the zero address");
-        require(amount <= balances[sender], "ERC20: transfer amount exceeds balance");
-        balances[sender] = balances[sender].sub(amount);
-        balances[recipient] = balances[recipient].add(amount);
-        emit Transfer(sender, recipient, amount);
-    }
     
     function _approve(address owner, address spender, uint256 amount) internal {
         require(owner!=address(0), "ERC20: approve from the zero address");
@@ -175,7 +167,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     }
     
     function getTotalFees() public view returns (uint256) {
-        return totalFees;
+        return totalTaxFees;
     }
     
     function reflect(uint256 tokenAmount) public {
@@ -183,7 +175,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         (uint256 refAmount,,,,,) = getValues(tokenAmount);
         refOwned[msgSender()] = refOwned[msgSender()].sub(refAmount);
         totalReflection = totalReflection.sub(refAmount);
-        totalFees = totalFees.add(tokenAmount);
+        totalTaxFees = totalTaxFees.add(tokenAmount);
     }
     
     function refelectionFromToken(uint256 tokenAmount, bool transferFeeDeducted) public view returns(uint256) {
@@ -202,7 +194,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         return refAmount.div(getRate());
     }
     
-    function excludeFromReward(address account) public onlyOwner() {
+    function excludeFromReward(address account) public onlyOwner {
         require(account != 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D, 'We can not exclude Uniswap router.');
         require(!isExcluded[account], "The account is already excluded");
         if(refOwned[account]>0) {
@@ -212,7 +204,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         excluded.push(account);
     }
     
-    function includeFromReward(address account) external onlyOwner() {
+    function includeFromReward(address account) external onlyOwner {
         require(isExcluded[account], "The account is already included");
         for(uint256 i=0;i<excluded.length;i++) {
             if(excluded[i]==account) {
@@ -223,5 +215,256 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
                 break;
             }
         }
+    }
+    
+    function excludeFromFee(address account) public onlyOwner {
+        isExcludedFromFee[account] = true;
+    }
+    
+    function includeInFee(address account) public onlyOwner {
+        isExcludedFromFee[account] = false;
+    }
+    
+    function isExcludedFromFee(address account) public view returns(bool) {
+        return isExcludedFromFee[account];
+    }
+    
+    function setTaxPercent(uint256 tax) external onlyOwner {
+        taxFee = tax;
+    }
+    
+    function setLiquidityFeePercent(uint256 liqFee) external onlyOwner {
+        liquidityFee = liqFee;
+    }
+    
+    function setMaxTxPercent(uint256 maxTxPerc) external onlyOwner {
+        maxTxAmount = totalSupply.mul(maxTxPerc).div(10**2);
+    }
+    
+    function setSwapAndLiquifyEnabled(bool enabled) public onlyOwner {
+        swapAndLiquifyEnabled = enabled;
+        emit swapAndLiquifyEnabledUpdated(enabled);
+    }
+    
+    // To recieve ETH from uniswapV2Router when swaping
+    receive() external payable {}
+    
+    function reflectFee(uint256 refFee, uint256 taxFee) private {
+        totalReflection = totalReflection.sub(refFee);
+        totalTaxFees = totalTaxFees.add(taxFee);
+    }
+    
+    function getValues(uint256 tokenAmount) private view returns(uint256, uint256, uint256, uint256, uint256, uint256) {
+        (uint256 tokenTransferAmount, uint256 taxFee, uint256 liqFee) = getTokenVals(tokenAmount);
+        (uint256 refAmount, uint256 refTransferAmount, uint256 refFee) = getRefVals(tokenAmount, taxFee, liqFee, getRate());
+        return(refAmount, refTransferAmount, refFee, tokenTransferAmount, taxFee, liqFee);
+    }
+    
+    function getTokenVals(uint256 tokenAmount) private view returns(uint256, uint256, uint256) {
+        uint256 taxFee = calculateTaxFee(tokenAmount);
+        uint256 liqFee = calculateLiqFee(tokenAmount);
+        uint256 tokenTransferAmount = tokenAmount.sub(taxFee).sub(liqFee); // 5% for holder and 5% for liquidity pool
+        return(tokenTransferAmount, taxFee, liqFee);
+    }
+    
+    function getRefVals(uint256 tokenAmount, uint256 taxFee, uint256 liqFee, uint256 currRate) 
+    private pure returns(uint256, uint256, uint256) {
+        uint256 refAmount = tokenAmount.mul(currRate);
+        uint256 refFee = taxFee.mul(currRate);
+        uint256 refLiquidity = liqFee.mul(currRate);
+        uint256 rTransferAmount = refAmount.sub(refFee).sub(refLiquidity);
+        return(refAmount, refTransferAmount, refFee);
+    }
+    
+    function getRate() private view returns(uint256) {
+        (uint256 refSupply, uint256 tokenSupply) = getCurrSupply();
+        return refSupply.div(tokenSupply);
+    }
+    
+    function getCurrSupply() private view returns(uint256, uint256) {
+        uint256 refSupply = totalReflection;
+        uint256 tokenSupply = totalSupply;
+        for(uint256 i=0;i<excluded.length;i++) {
+            if(refOwned[excluded[i]]>refSupply||tokenOwned[excluded[i]]>tokenSupply) return(totalReflection, totalSupply)
+            refSupply = refSupply.sub(refOwned[excluded[i]]);
+            tokenSupply = tokenSupply.sub(tokenOwned[excluded[i]]);
+        }
+        if(refSupply<totalReflection.div(totalSupply)) return(totalReflection, totalSupply);
+        return(refSupply, tokenSupply);
+    }
+    
+    function takeLiquidity(uint256 liqFee) private {
+        uint256 currRate = getRate();
+        uint256 refLiquidity = liqFee.mul(currRate);
+        refOwned[address(this)] = refOwned[address(this)].add(refLiquidity);
+        if(isExcluded[Addressss(this)])
+            tokenOwned[address(this)] = tokenOwned[address(this)].add(liqFee); 
+    }
+    
+    function calculateTaxFee(uint256 tokenAmount) private view returns(uint256) {
+        return tokenAmount.mul(taxFee).div(10**2);
+    }
+    
+    function calculateLiqFee(uint256 tokenAmount) private view return(uint256) {
+        return tokenAmount.mul(liqFee).div(10**2);
+    }
+    
+    function removeAllFee() private {
+        if(taxFee==0 && liqFee==0) return;
+        previousTaxFee = taxFee;
+        previousLiqFee = liqFee;
+        taxFee = 0;
+        liqFee = 0;
+    }
+    
+    function restoreAllFee() private {
+        taxFee = previousTaxFee;
+        liqFee = previousLiqFee;
+    }
+    
+    function _transfer(address sender, address recipient, uint256 amount) internal {
+        require(sender!=address(0), "ERC20: transfer from the zero address");
+        require(recipient!=address(0), "ERC20: transfer to the zero address");
+        require(amount > 0, "Transfer amount must be greater than zero");
+        if(sender!=getOwner()  && recipient != getOwner())
+            require(amount <= maxTxAmount, "ERC20: transfer amount exceeds the maxTxAmount");
+        /** 
+         * is the token balance of this contract address over the min number of
+         * tokens that we need to initiate a swap + liquidity lock?
+         * also, don't get caught in a circular liquidity event.
+         * also, don't swap & liquify if sender is uniswap pair.
+         */
+        uint256 contractTokenBalance = balanceOf(address(this));
+        if(contractTokenBalance >= maxTxAmount) contractTokenBalance = maxTxAmount; // In initiation
+        bool overMinTokenBalance = contractTokenBalance >= tokensSellToAddLiq;
+        if(overMinTokenBalance && !inSwapAndLiquify && sender!=uniswapV2Pair && swapAndLiquifyENabled) {
+            contractTokenBalance = tokensSellToAddLiq;
+            // Add liquidity
+            swapAndLiquify(contractTokenBalance);
+        }
+        //indicates if fee should be deducted from transfer
+        bool takeFee = true;
+        //if any account belongs to _isExcludedFromFee account then remove the fee
+        if(isExcludedFromFee[sender] || isExcludedFromFee[recipient]) takeFee = false;
+        //transfer amount, it will take tax, burn, liquidity fee
+        tokenTransfer(sender, recipient, amount, takeFee);
+        // balances[sender] = balances[sender].sub(amount);
+        // balances[recipient] = balances[recipient].add(amount);
+        // emit Transfer(sender, recipient, amount);
+    }
+    
+    function swapAndLiquify(uint256 contractTokenBalance) private lockSwap {
+        // split the contract balance into halves for adding liquidity
+        uint256 half = contractTokenBalance.div(2);
+        uint256 halfForETH = contractTokenBalance.sub(half);
+        
+        /** Capture the contract's current ETH balance.
+         * this is so that we can capture exactly the amount of ETH that the
+         * swap creates, and not make the liquidity event include any ETH that
+         * has been manually sent to the contract
+         */
+        uint256 initialETHBalance = address(this).balance;
+        
+        // swap tokens for ETH
+        swapTokensForEth(halfForETH); // <- this breaks the ETH -> HATE swap when swap+liquify is triggered
+        
+        // how much ETH did we just swap into?
+        swapedETH = initialETHBalance.sub(address(this).balance);
+        
+        // Add liquidity to uniswap
+        addLiquidity(half, swapedETH);
+        emit swapAndLiquify(half, swapedETH, haflForETH);
+    }
+    
+    function swapTokensForETH(uint256 tokenAmount) private {
+        // Generate the uniswap pair path of token -> weth
+        address[] memory path = new address[](2);
+        path[0] = address(this);
+        path[1] = uniswapV2Router.WETH();
+        
+        approve(address(this), address(uniswapV2Router), tokenAmount);
+        
+        // Make the swap
+        uniswapV2Router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+            tokenAmout,
+            0, // Accept any amount of ETH
+            path,
+            address(this),
+            block.timeStamp);
+    }
+    
+    function addLiquidity(uint256 tokenAmount, uint256 ethAmount) private {
+        // Approve token transfer to cover all possible scenarios
+        approve(address(this), address(uniswapV2Router), tokenAmount);
+        
+        // Add the liquidity
+        uniswapV2Router.addLiquidityETH{value: ethAmount}(
+            address(this),
+            tokenAmount,
+            0, // Slippage is unavoidable
+            0,
+            getOwner(),
+            block.timeStamp);
+    }
+    
+    // This method is responsible for taking all fee, if takeFee is true
+    function tokenTransfer(address sender, address recipient, uint256 amount, bool takeFee) private {
+        if(!takenFee) removeAllFee();
+        
+        if(isExcluded[sender] && !isExcluded[recipient]) {
+            transferFromExcluded(sender, recipient, amount);
+        }else if(!isExcluded[sender] && isExcluded[recipient]) {
+            transferToExcluded(sender, recipient, amount);
+        }else if(isExcluded[sender] && isEcluded[recipient]) {
+            transferBothExcluded(sender, recipient, amount);
+        }else {
+            transferStandard(sender, recipient, amount);
+        }
+        
+        if(!takeFee) restallAllFee();
+    }
+    
+    function transferStandard(address sender, address recipient, uint256 tokenAmount) private {
+        (uint256 rewardAmount, uint256 rewardTransfer, uint256 rewardFee, 
+        uint256 tokenTransfer, uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
+        rewardOwned[sender] = rewardOwned[sender].sub(rewardAmount);
+        rewardOwned[recipient] = rewardOwned[recipient].add(rewardTransfer);
+        takeLiquidity(liqFee);
+        reflectFee(rewardFee, taxFee);
+        emit Transfer(sender, recipient, tokenTransfer);
+    }
+    
+    function transferToExcluded(address sender, address recipient, uint256 tokenAmount) private {
+        (uint256 rewardAmount, uint256 rewardTransfer, uint256 rewardFee, 
+        uint256 tokenTransfer, uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
+        rewardOwned[sender] = rewardOwned[sender].sub(rewardAmount);
+        tokenOwned[recipient] = tokenOwned[recipient].add(tokenTransfer)
+        rewardOwned[recipient] = rewardOwned[recipient].add(rewardTransfer);
+        takeLiquidity(liqFee);
+        reflectFee(rewardFee, taxFee);
+        emit Transfer(sender, recipient, tokenTransfer);
+    }
+    
+    function transferFromExcluded(address sender, address recipient, uint256 tokenAmount) private {
+        (uint256 rewardAmount, uint256 rewardTransfer, uint256 rewardFee, 
+        uint256 tokenTransfer, uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
+        tokenOwned[sender] = tokenOwned[sender].sub[tokenAmount]
+        rewardOwned[sender] = rewardOwned[sender].sub(rewardAmount);
+        rewardOwned[recipient] = rewardOwned[recipient].add(rewardTransfer);
+        takeLiquidity(liqFee);
+        reflectFee(rewardFee, taxFee);
+        emit Transfer(sender, recipient, tokenTransfer);
+    }
+    
+    function transferBothExcluded(address sender, address recipient, uint256 tokenAmount) private {
+        (uint256 refAmount, uint256 refTranferAmount, uint256 refFee, uint256 tokenTransferAmount, 
+        uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
+        tokenOwned[sender] = tokenOwned[sender].sub(tokenAmount);
+        refOwned[sender] = refOwned[sender].sub(refAmount);
+        tokenOwned[recipient] = tokenOwned[recipient].add(tokenTransferAmount);
+        refOwned[recipient] = refOwned[recipient].add(refTranferAmount);
+        takeLiquidity(liqFee);
+        reflectFee(refFee, taxFee);
+        emit Transfer(sender, recipient, tokenAmount);
     }
  }
