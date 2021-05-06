@@ -19,41 +19,42 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     string private constant symbol= 'NEKO';
     uint8 private constant decimals = 18;
     
-    uint256 private constant MAX = ~uint256(0); // 100 trillion of Nekocoins issued in Genesis
-    uint256 private totalSupply = 10**15;
-    uint256 private totalReflection = MAX - MAX%totalSupply;
-    uint256 private totalTaxFees;
+    uint256 private constant MAX = ~uint256(0);
+    uint256 private totalSupply = 10**15; // 100 trillion of Nekocoins issued in Genesis.
+    uint256 private totalRewardRemained = MAX - MAX%totalSupply; // Static reward, also called reflection.
+    uint256 private totalRewardReflected; // Total amount of static reward has been distributed.
     
-    uint256 public taxFee = 5;
-    uint256 private previousTaxFee = taxFee;
-    uint256 public liquidityFee = 5;
-    uint256 private previousLiqFee = liquidityFee;
+    uint256 public rewardRate = 0.05; // The rate of rewards reflected from transferred tokens.
+    uint256 private previousrewardRate = rewardRate;
+    uint256 public liquifyRate = 0.05; // 5% of transferred tokens to be added as liquidity.
+    uint256 private previousLiqfyRate = liquifyRate;
     
     IUniswapV2Router02 public immutable uniswapV2Router;
     address public immutable uniswapV2Pair;
+    // Check if the contract balance is in the procedure of swapping and liquifying, to avoid repeating before this.balance has changed.
     bool private inSwapAndLiquify;
-    bool public swapAndLiquifyEnabled = true;
+    bool public swapAndLiquifyEnabled = true; // In case to lock this function
     
-    uint256 public maxTxAmount = totalSupply.div(2);
-    uint256 private tokensSellToAddLiq = totalSupply.div(2);
+    uint256 public maxTxAmount = 10**12; // 100 billion tokens in a single transaction at most.
+    uint256 private liquifyThreshold = 10**10; // The threshold amount of tokens the contract hold to launch a swapAndLiquify event.
 
     mapping(address => uint256) private balances;
     mapping(address => mapping(address => uint256)) private allowances;
     
-    mapping(address => uint256) private refOwned;
-    mapping(address => uint256) private tokensOwned;
+    mapping(address => uint256) private rewardOwned; // The accrued reward already owned by the account.
+    mapping(address => uint256) private tokensOwned; // The neko coin owned by the account.
     
-    address[] private excluded;
+    address[] private excluded; // Accounts that are excluded from the static reward.
+    // Check if the account is excluded from the trading fee(for static reward and liquidity) or not.
     mapping(address => bool) private isExcludedFromFee;
     mapping(address => bool) private isExcluded; // From static reward
     
-    event minTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap);
-    event SwapAndLiquifyEnabledUpdated(bool enabled);
-    event SwapAndLiquify(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensIntoLiqudity);
-    // event Approval(address indexed tokenOwner, address indexed permittedSpender, uint256 tokenValue);
-    // event Transfer(address indexed From, address indexed To, uint256 tokenValue);
+    // event minTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap); // Found nowhere to use.
+    event swapAndLiqEnabled(bool enabled); // Announce the updated state about the availability of swapping and liquifying
+    event swapAndLiqComplete(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensIntoLiqudity);
     
-    modifier lockSwap{inSwapAndLiquify =true; _; inSwapAndLiquify = false;}
+    // Lock the contract to assure no more swapping and liquifying can be executed before the current one has been done.
+    modifier lockTheSwap{inSwapAndLiquify=true; _; inSwapAndLiquify=false;}
 
     constructor() public {
         refOwned[msgSender()] = totalReflection;
@@ -184,7 +185,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
             (uint256 refAmount,,,,,) = getValues(tokenAmount);
             return refAmount;
         } else {
-            (,refTransferAmount,,,,) = getValues(tokenAmount);
+            (,uint256 refTransferAmount,,,,) = getValues(tokenAmount);
             return refTransferAmount;
         }
     }
@@ -225,7 +226,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         isExcludedFromFee[account] = false;
     }
     
-    function isExcludedFromFee(address account) public view returns(bool) {
+    function checkIsExcludedFromFee(address account) public view returns(bool) {
         return isExcludedFromFee[account];
     }
     
@@ -243,7 +244,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     
     function setSwapAndLiquifyEnabled(bool enabled) public onlyOwner {
         swapAndLiquifyEnabled = enabled;
-        emit swapAndLiquifyEnabledUpdated(enabled);
+        emit SwapAndLiquifyEnabledUpdated(enabled);
     }
     
     // To recieve ETH from uniswapV2Router when swaping
@@ -272,7 +273,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         uint256 refAmount = tokenAmount.mul(currRate);
         uint256 refFee = taxFee.mul(currRate);
         uint256 refLiquidity = liqFee.mul(currRate);
-        uint256 rTransferAmount = refAmount.sub(refFee).sub(refLiquidity);
+        uint256 refTransferAmount = refAmount.sub(refFee).sub(refLiquidity);
         return(refAmount, refTransferAmount, refFee);
     }
     
@@ -285,9 +286,9 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         uint256 refSupply = totalReflection;
         uint256 tokenSupply = totalSupply;
         for(uint256 i=0;i<excluded.length;i++) {
-            if(refOwned[excluded[i]]>refSupply||tokenOwned[excluded[i]]>tokenSupply) return(totalReflection, totalSupply)
+            if(refOwned[excluded[i]]>refSupply||tokensOwned[excluded[i]]>tokenSupply) return(totalReflection, totalSupply);
             refSupply = refSupply.sub(refOwned[excluded[i]]);
-            tokenSupply = tokenSupply.sub(tokenOwned[excluded[i]]);
+            tokenSupply = tokenSupply.sub(tokensOwned[excluded[i]]);
         }
         if(refSupply<totalReflection.div(totalSupply)) return(totalReflection, totalSupply);
         return(refSupply, tokenSupply);
@@ -297,29 +298,29 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         uint256 currRate = getRate();
         uint256 refLiquidity = liqFee.mul(currRate);
         refOwned[address(this)] = refOwned[address(this)].add(refLiquidity);
-        if(isExcluded[Addressss(this)])
-            tokenOwned[address(this)] = tokenOwned[address(this)].add(liqFee); 
+        if(isExcluded[address(this)])
+            tokensOwned[address(this)] = tokensOwned[address(this)].add(liqFee); 
     }
     
     function calculateTaxFee(uint256 tokenAmount) private view returns(uint256) {
         return tokenAmount.mul(taxFee).div(10**2);
     }
     
-    function calculateLiqFee(uint256 tokenAmount) private view return(uint256) {
-        return tokenAmount.mul(liqFee).div(10**2);
+    function calculateLiqFee(uint256 tokenAmount) private view returns(uint256) {
+        return tokenAmount.mul(liquidityFee).div(10**2);
     }
     
     function removeAllFee() private {
-        if(taxFee==0 && liqFee==0) return;
+        if(taxFee==0 && liquidityFee==0) return;
         previousTaxFee = taxFee;
-        previousLiqFee = liqFee;
+        previousLiqFee = liquidityFee;
         taxFee = 0;
-        liqFee = 0;
+        liquidityFee = 0;
     }
     
     function restoreAllFee() private {
         taxFee = previousTaxFee;
-        liqFee = previousLiqFee;
+        liquidityFee = previousLiqFee;
     }
     
     function _transfer(address sender, address recipient, uint256 amount) internal {
@@ -328,16 +329,16 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         require(amount > 0, "Transfer amount must be greater than zero");
         if(sender!=getOwner()  && recipient != getOwner())
             require(amount <= maxTxAmount, "ERC20: transfer amount exceeds the maxTxAmount");
-        /** 
-         * is the token balance of this contract address over the min number of
-         * tokens that we need to initiate a swap + liquidity lock?
-         * also, don't get caught in a circular liquidity event.
-         * also, don't swap & liquify if sender is uniswap pair.
-         */
+         
+        // Is the token balance of this contract address over the min number of
+        // tokens that we need to initiate a swap + liquidity lock?
+        // Also, don't get caught in a circular liquidity event.
+        // Also, don't swap & liquify if sender is uniswap pair.
+         
         uint256 contractTokenBalance = balanceOf(address(this));
         if(contractTokenBalance >= maxTxAmount) contractTokenBalance = maxTxAmount; // In initiation
         bool overMinTokenBalance = contractTokenBalance >= tokensSellToAddLiq;
-        if(overMinTokenBalance && !inSwapAndLiquify && sender!=uniswapV2Pair && swapAndLiquifyENabled) {
+        if(overMinTokenBalance && !inSwapAndLiquify && sender!=uniswapV2Pair && swapAndLiquifyEnabled) {
             contractTokenBalance = tokensSellToAddLiq;
             // Add liquidity
             swapAndLiquify(contractTokenBalance);
@@ -358,22 +359,21 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         uint256 half = contractTokenBalance.div(2);
         uint256 halfForETH = contractTokenBalance.sub(half);
         
-        /** Capture the contract's current ETH balance.
-         * this is so that we can capture exactly the amount of ETH that the
-         * swap creates, and not make the liquidity event include any ETH that
-         * has been manually sent to the contract
-         */
+        // Capture the contract's current ETH balance.
+        //  this is so that we can capture exactly the amount of ETH that the
+        // swap creates, and not make the liquidity event include any ETH that
+        // has been manually sent to the contract
         uint256 initialETHBalance = address(this).balance;
         
         // swap tokens for ETH
-        swapTokensForEth(halfForETH); // <- this breaks the ETH -> HATE swap when swap+liquify is triggered
+        swapTokensForETH(halfForETH); // <- this breaks the ETH -> HATE swap when swap+liquify is triggered
         
         // how much ETH did we just swap into?
-        swapedETH = initialETHBalance.sub(address(this).balance);
+        uint256 swapedETH = initialETHBalance.sub(address(this).balance);
         
         // Add liquidity to uniswap
         addLiquidity(half, swapedETH);
-        emit swapAndLiquify(half, swapedETH, haflForETH);
+        emit SwapAndLiquify(half, swapedETH, halfForETH);
     }
     
     function swapTokensForETH(uint256 tokenAmount) private {
@@ -386,7 +386,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         
         // Make the swap
         uniswapV2Router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-            tokenAmout,
+            tokenAmount,
             0, // Accept any amount of ETH
             path,
             address(this),
@@ -409,19 +409,19 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     
     // This method is responsible for taking all fee, if takeFee is true
     function tokenTransfer(address sender, address recipient, uint256 amount, bool takeFee) private {
-        if(!takenFee) removeAllFee();
+        if(!takeFee) removeAllFee();
         
         if(isExcluded[sender] && !isExcluded[recipient]) {
             transferFromExcluded(sender, recipient, amount);
         }else if(!isExcluded[sender] && isExcluded[recipient]) {
             transferToExcluded(sender, recipient, amount);
-        }else if(isExcluded[sender] && isEcluded[recipient]) {
+        }else if(isExcluded[sender] && isExcluded[recipient]) {
             transferBothExcluded(sender, recipient, amount);
         }else {
             transferStandard(sender, recipient, amount);
         }
         
-        if(!takeFee) restallAllFee();
+        if(!takeFee) restoreAllFee();
     }
     
     function transferStandard(address sender, address recipient, uint256 tokenAmount) private {
@@ -438,7 +438,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
         (uint256 rewardAmount, uint256 rewardTransfer, uint256 rewardFee, 
         uint256 tokenTransfer, uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
         rewardOwned[sender] = rewardOwned[sender].sub(rewardAmount);
-        tokenOwned[recipient] = tokenOwned[recipient].add(tokenTransfer)
+        tokenOwned[recipient] = tokenOwned[recipient].add(tokenTransfer);
         rewardOwned[recipient] = rewardOwned[recipient].add(rewardTransfer);
         takeLiquidity(liqFee);
         reflectFee(rewardFee, taxFee);
@@ -448,7 +448,7 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     function transferFromExcluded(address sender, address recipient, uint256 tokenAmount) private {
         (uint256 rewardAmount, uint256 rewardTransfer, uint256 rewardFee, 
         uint256 tokenTransfer, uint256 taxFee, uint256 liqFee) = getValues(tokenAmount);
-        tokenOwned[sender] = tokenOwned[sender].sub[tokenAmount]
+        tokenOwned[sender] = tokenOwned[sender].sub[tokenAmount];
         rewardOwned[sender] = rewardOwned[sender].sub(rewardAmount);
         rewardOwned[recipient] = rewardOwned[recipient].add(rewardTransfer);
         takeLiquidity(liqFee);
