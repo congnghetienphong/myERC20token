@@ -70,20 +70,4 @@ contract Ownable is Context {
         emit ownershipTransferred(owner, newOwner);
         owner = newOwner;
     }
-    
-    // Locks the contract by owner for a given lockTime
-    function lockContract(uint256 lockTime) public virtual onlyOwner {
-        emit ownershipTransferred(owner, address(0));
-        previousOwner = owner;
-        owner = address(0);
-        unlockTime = block.timestamp + lockTime;
-    }
-    
-    // Unlocks the contract by owner while lockTime is exceeds
-    function unlockContract() public virtual {
-        require(_msgSender()==previousOwner, "You don't have permission to unlock");
-        require(block.timestamp>unlockTime, "Contract is still under locking duration");
-        emit ownershipTransferred(owner, previousOwner);
-        owner = previousOwner;
-    }
  }
