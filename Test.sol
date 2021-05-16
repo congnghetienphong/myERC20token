@@ -672,7 +672,7 @@ contract Nekocoin is Context, IERC20, Ownable {
     }
     
     function balanceOf(address account) public override view returns(uint256) {
-        return balances[account].div(getExRate());
+        return balances[account].mul(getExRate());
     }
     
     function transfer(address recipient, uint256 amount) public override returns(bool) {
