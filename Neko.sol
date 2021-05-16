@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity ^0.6.12;
 
 import "./IERC20.sol";
 import "./SafeMath.sol";
-import "./IERC20Extended.sol";
+import "./IERC20Metadata.sol";
 import "./Context.sol";
 import "./Ownable.sol";
 import "./Address.sol";
@@ -12,30 +12,29 @@ import "./IUniswapV2Router02.sol";
 import "./IUniswapV2Factory.sol";
 import "./IUniswapV2Pair.sol";
 
-contract Neko is Context, IERC20, IERC20Extended, Ownable {
+contract Nekocoin is Context, IERC20, IERC20Metadata, Ownable {
     using SafeMath for uint256;
     using Address for address;
     string private constant name = 'Neko';
     string private constant symbol= 'NEKO';
-    uint8 private constant decimals = 9;
+    uint8 private constant decimals = 18;
     
-    uint256 private totalSupply = 10**15; // 100 trillion of neko issued in Genesis.
+    uint256 private constant totalSupply = 10**9**uint256(decimals); // 1 billion of nekocoins issued in Genesis.
     uint256 private totalReward; // Accrued reward to be redistributed;
     uint256 private burned; // Total amount of tokens have been burned.
-    uint256 private constant maxTxAmount = 10**12; // Limit the maximum transaction amount to prevent token price from manipulating.
-    uint256 private constant thresholdAmount = 10**9; // The threshold amount of tokens the contract hold to launch a swapAndLiquify event.
+    uint256 private constant thresholdAmount = 10**6**uint256(decimals); // The threshold amount of nekocoins the contract hold to launch a swapAndLiquify event.
     uint256 private constant reflectRate = 1; // The rate of static rewarding and burnning reflected from transferred tokens.
     uint256 private constant liquifyRate = 1; // 1% of transferred tokens to be added as liquidity.
     
+    mapping(address => uint256) private balances; // The tokens owned by the account before scaled by reflection.
+    mapping(address => mapping(address => uint256)) private allowances;
+    
     IUniswapV2Router02 public immutable uniswapV2Router;
     address public immutable uniswapV2Pair;
+    
     // Check if the contract balance is in the procedure of swapping and liquifying, to avoid repeating before this.balance has changed.
     bool private inSwapAndLiquify;
     bool public swapAndLiquifyEnabled = true; // In case to lock this function
-
-    mapping(address => uint256) private balances; // The tokens owned by the account except from rewards.
-    mapping(address => uint256) private actualBalances; // The tokens owned by the account combined with rewards by a dynamic rate.
-    mapping(address => mapping(address => uint256)) private allowances;
     
     event SwapAndLiqEnabled(bool enabled); // Announce the updated state about the availability of swapping and liquifying
     event SwapAndLiquify(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensIntoLiquidity);
@@ -43,16 +42,15 @@ contract Neko is Context, IERC20, IERC20Extended, Ownable {
     // Lock the contract to assure no more swapping and liquifying can be executed before the current procedure has been done.
     modifier lockTheSwap{inSwapAndLiquify=true; _; inSwapAndLiquify=false;}
 
-    constructor() {
+    constructor() public {
         totalReward = 0;
         burned = 0;
-        balances[msgSender()] = totalSupply;
-        actualBalances[msgSender()] = totalSupply;
+        balances[_msgSender()] = totalSupply;
         IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x05fF2B0DB69458A0750badebc4f9e13aDd608C7F);
         // Create a uniswap pair for this new token
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).createPair(address(this), _uniswapV2Router.WETH());
         uniswapV2Router = _uniswapV2Router;
-        emit Transfer(address(0), msgSender(), totalSupply);
+        emit Transfer(address(0), _msgSender(), totalSupply);
     }
     
     // To recieve ETH from uniswapV2Router when swaping
