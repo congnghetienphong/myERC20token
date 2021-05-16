@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0
+  
+// SPDX-License-Identifier: MIT
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity ^0.8.0;
 
-/**
+/*
  * @dev Provides information about the current execution context, including the
  * sender of the transaction and its data. While these are generally available
  * via msg.sender and msg.data, they should not be accessed in such a direct
@@ -13,13 +14,12 @@ pragma solidity >=0.7.0 <0.9.0;
  * This contract is only required for intermediate, library-like contracts.
  */
 abstract contract Context {
-    function msgSender() internal view virtual returns (address) {
+    function _msgSender() internal view virtual returns (address) {
         return msg.sender;
     }
-    
-    function msgData() internal view virtual returns (bytes calldata) {
-        // silence state mutability warning without generating bytecode - see https://github.com/ethereum/solidity/issues/2691
-        this;
+
+    function _msgData() internal view virtual returns (bytes calldata) {
+        this; // silence state mutability warning without generating bytecode - see https://github.com/ethereum/solidity/issues/2691
         return msg.data;
     }
 }
