@@ -1,19 +1,19 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity ^0.8.0;
 
 /**
  * @dev Collection of functions related to the address type
  */
- 
- library Address {
+library Address {
     /**
      * @dev Returns true if `account` is a contract.
      *
      * [IMPORTANT]
+     * ====
      * It is unsafe to assume that an address for which this function returns
      * false is an externally-owned account (EOA) and not a contract.
-     * 
+     *
      * Among others, `isContract` will return false for the following
      * types of addresses:
      *
@@ -21,18 +21,19 @@ pragma solidity >=0.7.0 <0.9.0;
      *  - a contract in construction
      *  - an address where a contract will be created
      *  - an address where a contract lived, but was destroyed
+     * ====
      */
-     function isContract(address account) internal view returns(bool) {
-        // According to EIP-1052, 0x0 is the value returned for not-yet created accounts
-        // and 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470 is returned
-        // for accounts without code, i.e. `keccak256('')`
-        bytes32 codeHash;
-        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+    function isContract(address account) internal view returns (bool) {
+        // This method relies on extcodesize, which returns 0 for contracts in
+        // construction, since the code is only stored at the end of the
+        // constructor execution.
+
+        uint256 size;
         // solhint-disable-next-line no-inline-assembly
-        assembly {codeHash:=extcodehash(account)}
-        return(codeHash!=accountHash && codeHash!= 0x0);
-     }
-     
+        assembly { size := extcodesize(account) }
+        return size > 0;
+    }
+
     /**
      * @dev Replacement for Solidity's `transfer`: sends `amount` wei to
      * `recipient`, forwarding all available gas and reverting on errors.
@@ -49,13 +50,14 @@ pragma solidity >=0.7.0 <0.9.0;
      * {ReentrancyGuard} or the
      * https://solidity.readthedocs.io/en/v0.5.11/security-considerations.html#use-the-checks-effects-interactions-pattern[checks-effects-interactions pattern].
      */
-     function sendVal(address payable recipient, uint256 amount) internal {
-         require(amount<=address(this).balance, "Address: insufficient balance");
-         // solhint-disable-next-line avoid-low-level-calls, avoid-call-value
-         (bool success, ) = recipient.call{ value: amount }("");
-         require(success, "Adress: unable to send value, recipient may have reverted");
-     }
-     
+    function sendValue(address payable recipient, uint256 amount) internal {
+        require(address(this).balance >= amount, "Address: insufficient balance");
+
+        // solhint-disable-next-line avoid-low-level-calls, avoid-call-value
+        (bool success, ) = recipient.call{ value: amount }("");
+        require(success, "Address: unable to send value, recipient may have reverted");
+    }
+
     /**
      * @dev Performs a Solidity function call using a low level `call`. A
      * plain`call` is an unsafe replacement for a function call: use this
@@ -74,25 +76,25 @@ pragma solidity >=0.7.0 <0.9.0;
      *
      * _Available since v3.1._
      */
-     function functionCall(address target, bytes memory data) internal returns (bytes memory) {
-         return functionCallWithValue(target, data, 0);
-     }
+    function functionCall(address target, bytes memory data) internal returns (bytes memory) {
+      return functionCallWithValue(target, data, 0);
+    }
      
-     function functionCallWithValue(address target, bytes memory data, uint256 weiVal) internal returns(bytes memory) {
-        require(weiVal<=address(this).balance, "Address: Insufficent balance");
-        require(isContract(target), "Address: call to non-contract");
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool success, bytes memory returndata) = target.call{ value: weiVal }(data);
-        if (success) {
-            return returndata;
-        }else {
-           if(returndata.length>0){
-            // The easiest way to bubble the revert reason is using memory via assembly
-            // solhint-disable-next-line no-inline-assembly
-            assembly {let returndata_size := mload(returndata) revert(add(32, returndata), returndata_size)}
-           }else {
-               revert("Address: low-level call with value failed");
-           }
-        }
-     }
- }
+    function functionCallWithValue(address target, bytes memory data, uint256 weiVal) internal returns(bytes memory) {
+       require(weiVal<=address(this).balance, "Address: Insufficent balance");
+       require(isContract(target), "Address: call to non-contract");
+       // solhint-disable-next-line avoid-low-level-calls
+       (bool success, bytes memory returndata) = target.call{ value: weiVal }(data);
+       if (success) {
+           return returndata;
+       }else {
+          if(returndata.length>0){
+           // The easiest way to bubble the revert reason is using memory via assembly
+           // solhint-disable-next-line no-inline-assembly
+           assembly {let returndata_size := mload(returndata) revert(add(32, returndata), returndata_size)}
+          }else {
+              revert("Address: low-level call with value failed");
+          }
+       }
+    }
+}
